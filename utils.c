@@ -1,9 +1,10 @@
 #include "utils.h"
 
 
-struct sockaddr_in parse_data(char *string)
+peer_in parse_data(char *string)
 {
-    struct sockaddr_in peer_in;
+    peer_in peer;
+    struct sockaddr_in addr_in;
     char name[16] = { 0 };
     char ip[32] = { 0 };
     char port_s[5] = { 0 };
@@ -11,12 +12,28 @@ struct sockaddr_in parse_data(char *string)
     
     sscanf(string, "%[^:]:%[^:]:%[^:]:%s", name, ip, port_s, filenames);
     int port = strtol(port_s, NULL, 10);
-    memset(&peer_in, 0, sizeof(peer_in));
-    peer_in.sin_family = AF_INET;
-    peer_in.sin_addr.s_addr = inet_addr(ip);
-    peer_in.sin_port   = htons(port);
-    // peer_in.sin_addr.s_addr = INADDR_ANY; // zeros ip, y tho i dunno
-    return peer_in;
+    memset(&addr_in, 0, sizeof(addr_in));
+    memset(&peer, 0, sizeof(peer));
+    addr_in.sin_family = AF_INET;
+    addr_in.sin_addr.s_addr = inet_addr(ip);
+    addr_in.sin_port   = htons(port);
+    // addr_in.sin_addr.s_addr = INADDR_ANY; // zeros ip, y tho i dunno
+    memcpy((void *) &peer.meta, (void *) &addr_in, sizeof(addr_in));
+    memcpy((void *) peer.name, (void *) name, sizeof(peer.name));  
+    return peer;
+}
+
+void handle_1(int peer_sock_fd)
+{
+    char buf[64];
+    int len = recv(peer_sock_fd, &buf, sizeof(buf), 0); // Do I need any flags? Otherwise, change to read syscall
+    
+    printf("Received bytes\t:\t%d\n", len); // Alice keeps on sending 4 more byte than expected, weird.
+    puts(buf);
+    peer_in peer = parse_data(buf);
+    puts(peer.name);
+    printf("New acquaintance\t:\t%s:%u\n",
+           inet_ntoa(peer.meta.sin_addr), ntohs(peer.meta.sin_port));
 }
 
 char read_byte(char *filename, int n)

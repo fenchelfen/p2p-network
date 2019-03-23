@@ -11,7 +11,6 @@
 #include <syscall.h>
 #include <time.h>
 
-
 struct sockaddr_in peers[8];
 int peer_cnt;
 
@@ -20,6 +19,8 @@ int my_port;
 char files[8]; // Store filenames here, statically 
 int file_cnt;
 
+char *personal_info;
+
 typedef struct {
     char cmd[5];
     char filename[10];
@@ -27,13 +28,20 @@ typedef struct {
     struct sockaddr_in meta;
 } packet;
 
+typedef struct {
+    char name[16];
+    struct sockaddr_in meta; 
+} peer_in;
+
 void *dispatcher(void *);
 void *rqst_handler(void*);
 void requester();
 char read_byte(char *, int);
 void init_peer(int *, char **);
 
-struct sockaddr_in parse_data(char *);
+void handle_1(int);
+
+peer_in parse_data(char *);
 
 pthread_t threads[10];
 int thread_cnt;

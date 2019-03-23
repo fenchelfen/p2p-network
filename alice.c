@@ -4,7 +4,8 @@
 int main(int argc, char **argv)
 {
    if (argc < 5) {
-        puts("Your port,\n"
+        puts("Your ip,\n"
+             "Your port,\n"
              "First peer ip,\n"
              "First peer port,\n"
              "Initial file\n");
@@ -27,17 +28,28 @@ void init_peer(int *master_fd_ptr, char **argv)
     thread_cnt = 0;
     peer_cnt = 0;
     file_cnt = 0;
-    my_port = strtol(argv[1], NULL, 10);
-    int first_peer_port = strtol(argv[3], NULL, 10);
+    my_port = strtol(argv[2], NULL, 10);
+    int first_peer_port = strtol(argv[4], NULL, 10);
 
-    // Add init file to the list, argv[4] is the init file's name
-    memcpy((void *) &files[file_cnt++], argv[4], sizeof(argv[4]));
+    personal_info = malloc(sizeof("alice") + sizeof(argv[1]) + sizeof(argv[2]) + 3); // 3 is for colons
+    memset(personal_info, '\0', sizeof(personal_info));
+    strcat(personal_info, "alice");
+    strcat(personal_info, ":");
+    strcat(personal_info, argv[1]);
+    strcat(personal_info, ":");
+    strcat(personal_info, argv[2]);
+    strcat(personal_info, ":");
+
+    puts(personal_info);
+
+    // Add init file to the list, argv[5] is the init file's name
+    memcpy((void *) &files[file_cnt++], argv[5], sizeof(argv[4]));
 
     // Add first peer to the list
     struct sockaddr_in first_peer;
     memset(&first_peer, 0, sizeof(first_peer));
     first_peer.sin_family = AF_INET;
-    first_peer.sin_addr.s_addr  = inet_addr(argv[2]); // argv[2] is first peer's ip
+    first_peer.sin_addr.s_addr  = inet_addr(argv[3]); // argv[3] is first peer's ip
     first_peer.sin_port   = htons(first_peer_port);
     // first_peer.sin_addr.s_addr = INADDR_ANY; // zeros ip; i dunno y tho
     printf("First peer's everything\t:\t%s:%u\n",
@@ -50,7 +62,8 @@ void init_peer(int *master_fd_ptr, char **argv)
 
     server_sock_in.sin_family = AF_INET; // Socket internet, socket unix, socket link layer  
     server_sock_in.sin_port   = htons(my_port);
-    server_sock_in.sin_addr.s_addr = INADDR_ANY; // Means, socket is bound to all local interfaces
+    server_sock_in.sin_addr.s_addr  = inet_addr(argv[1]); // argv[1] is server's ip
+    // server_sock_in.sin_addr.s_addr = INADDR_ANY; // Means, socket is bound to all local interfaces
     printf("Server's everything\t:\t%s:%u\n",
            inet_ntoa(server_sock_in.sin_addr), ntohs(server_sock_in.sin_port));
     puts("");        
@@ -68,6 +81,7 @@ void init_peer(int *master_fd_ptr, char **argv)
     }
 }
 
+
 void *rqst_handler(void *args)
 {
     void **params = (void **) args;
@@ -78,34 +92,39 @@ void *rqst_handler(void *args)
     printf("Peer socket fild     \t:\t%d\n", peer_sock_fd);
 
     struct sockaddr_in *client_sock_in = (struct sockaddr_in *) params[1];
-
-    packet message; 
+    // packet message; 
+    int opcode;
 
     for (;;) {
-        int len = recv(peer_sock_fd, &message, sizeof(message), 0); // Do I need any flags? Otherwise, change to read syscall
+        int len = recv(peer_sock_fd, &opcode, sizeof(int), 0); // Do I need any flags? Otherwise, change to read syscall
 
-        // puts(message.cmd);
-        if (strcmp(message.cmd, "QUIT") == 0) {
+        printf("OPCODE\t:\t%d\n", opcode);
+
+        if (opcode == 237) {
             printf("Conn closure rqst arrived;\n"
                    "Release fild\t:\t%d\n", peer_sock_fd);
             break;
         } else if (
-            strcmp(message.cmd, "JOIN") == 0) {
-            printf("JOIN rqst from\t%s:%u\n",
-                   inet_ntoa(message.meta.sin_addr), ntohs(message.meta.sin_port));
-
-            memcpy((void *) &peers[peer_cnt++], (void *) &message.meta, sizeof(message.meta));
-        } else if (
-            strcmp(message.cmd, "QUER") == 0) {
-            // Compare against your list of files
-        } else if (
-            strcmp(message.cmd, "LIST") == 0) {
-            send(peer_sock_fd, &peers, sizeof(peers), 0);
-        } else if (
-            strcmp(message.cmd, "FGET") == 0) {
-            char byte = read_byte(message.filename, message.byte_n);
-            send(peer_sock_fd, &byte, 1, 0);
+            opcode == 1) {
+            handle_1(peer_sock_fd);
         }
+        // else if (
+        //     strcmp(message.cmd, "JOIN") == 0) {
+        //     printf("JOIN rqst from\t%s:%u\n",
+        //            inet_ntoa(message.meta.sin_addr), ntohs(message.meta.sin_port));
+
+        //     memcpy((void *) &peers[peer_cnt++], (void *) &message.meta, sizeof(message.meta));
+        // } else if (
+        //     strcmp(message.cmd, "QUER") == 0) {
+        //     // Compare against your list of files
+        // } else if (
+        //     strcmp(message.cmd, "LIST") == 0) {
+        //     send(peer_sock_fd, &peers, sizeof(peers), 0);
+        // } else if (
+        //     strcmp(message.cmd, "FGET") == 0) {
+        //     char byte = read_byte(message.filename, message.byte_n);
+        //     send(peer_sock_fd, &byte, 1, 0);
+        // }
     }
     free(client_sock_in);
     close(peer_sock_fd);
@@ -168,33 +187,18 @@ void requester()
     int addr_len = sizeof(dest);
 
     sleep(2); // Give the dispatcher time to start. Premature termination avoidance 
+    
+    // TCP the first peer
     if (connect(socket_fd, (struct sockaddr *) &dest, addr_len) == - 1) {
         perror("Failed to TCP initial peer");
         exit(EXIT_FAILURE);
     };
 
-    // Here I wil ask for the file byte by byte, I know in advance the # of bytes, well...
-
-    packet msg;
-    memcpy((void *) &msg.meta, (void *) &dest, sizeof(dest));
-    for (int i = 0; i < 57; ++i) {
-        memcpy((void *) &msg.cmd, "FGET", sizeof(msg.cmd));
-        memcpy((void *) &msg.filename, "juliet", 8);
-        msg.byte_n = i;
-    
-        send(socket_fd, &msg, sizeof(msg), 0);
-        char byte;
-        recv(socket_fd, &byte, sizeof(byte), 0); // Do I need any flags? Otherwise, change to read syscall
-        putchar(byte);
-        fflush(stdout);
-        sleep(1);
-    }
+    send(socket_fd, &(int){ 1 }, sizeof(int), 0);
 
     puts("");
-    memcpy((void *) &msg.meta, (void *) &dest, sizeof(dest));
-    memcpy((void *) &msg.cmd, "QUIT", sizeof(msg.cmd));
-
-    send(socket_fd, &msg, sizeof(msg), 0);
+    send(socket_fd, personal_info, strlen(personal_info), 0);
+    send(socket_fd, &(int){ 237 }, sizeof(int), 0);
 
     /* Issue: if the server thread is not yet dispatched, premature join may occure sry ... */
     
