@@ -1,0 +1,60 @@
+Running a main loop that listens for incoming connections from other peers
+
+1. Peer 1 conn
+2. Peer 2 starts a handler-thread
+3. Peer 1 sends msg
+4. Peer 2 sends ACK
+5. Conn closed
+
+>> Components of a Peer (modules)
+ > Peer
+    
+    Overall applications
+    1. Main loop
+    2. Separate threads for each conn
+    
+    Main loop dispatches incoming rqsts to handlers
+    Init happens when a peer builds a port for listening
+
+ > Peer conn
+
+    Encapsulates a socket conn to a peer node
+    An object that makes it easy for hte prog-r to send and receive
+
+####
+
+Peers are identified by host:port string
+My peer will be aware of other peers; because he's smart enough (not because he can't broadcast)
+Peer churn is not gonna be handled
+
+
+>> Protocol description
+>  JOIN
+    
+    Rqst to add itself to the the list of peers
+
+>  LIST
+
+    Rqst to retreive the list of peers
+
+>  QUER
+
+    Asks if your peer has the file
+
+> FGET
+
+    Asks to send a particular byte of a particular file 
+    
+>> Ideas
+> Open TCP for each peer who has the file
+> The db stores which peer has which files; off-the-shelf hash table
+> Watch your own protocol die; build the one of theirs
+
+>> Our own hecking (dang) protocol 
+
+> 1 for SYN; means, you want to SYN your db
+> 2 for a string formatted as "name_of_peer:ip:port:". May have an optional param -- filename1, filename2, ...
+> 3 for a number of known peers
+> 4 for a database unit: "name:ip:port:"; however, no filenames
+> 0 for a file request; you send 'filename' then; after that, m = -1 (no such file), m >= 0 is the num of words in the file;
+                        then you send words one by one
