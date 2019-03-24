@@ -11,7 +11,12 @@
 #include <syscall.h>
 #include <time.h>
 
-struct sockaddr_in peers[8];
+typedef struct {
+    char name[16];
+    struct sockaddr_in meta; 
+} peer_in;
+
+peer_in peers[8];
 int peer_cnt;
 
 int my_port;
@@ -21,27 +26,17 @@ int file_cnt;
 
 char *personal_info;
 
-typedef struct {
-    char cmd[5];
-    char filename[10];
-    int byte_n;
-    struct sockaddr_in meta;
-} packet;
-
-typedef struct {
-    char name[16];
-    struct sockaddr_in meta; 
-} peer_in;
-
 void *dispatcher(void *);
 void *rqst_handler(void*);
 void requester();
 char read_byte(char *, int);
 void init_peer(int *, char **);
 
+void join_peer(char *);
 void handle_1(int);
 
 peer_in parse_data(char *);
+char *get_string(peer_in *);
 
 pthread_t threads[10];
 int thread_cnt;

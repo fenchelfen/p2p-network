@@ -1,4 +1,4 @@
-#include "utils.h"
+#include "../include/utils.h"
 
 
 int main(int argc, char **argv)
@@ -29,33 +29,37 @@ void init_peer(int *master_fd_ptr, char **argv)
     peer_cnt = 0;
     file_cnt = 0;
     my_port = strtol(argv[2], NULL, 10);
-    int first_peer_port = strtol(argv[4], NULL, 10);
+    int meta_port = strtol(argv[4], NULL, 10);
 
     personal_info = malloc(sizeof("alice") + sizeof(argv[1]) + sizeof(argv[2]) + 3); // 3 is for colons
-    memset(personal_info, '\0', sizeof(personal_info));
+    memset(personal_info, '\0', strlen(personal_info));
     strcat(personal_info, "alice");
     strcat(personal_info, ":");
     strcat(personal_info, argv[1]);
     strcat(personal_info, ":");
     strcat(personal_info, argv[2]);
     strcat(personal_info, ":");
+    strcat(personal_info, "\0");
 
     puts(personal_info);
 
     // Add init file to the list, argv[5] is the init file's name
-    memcpy((void *) &files[file_cnt++], argv[5], sizeof(argv[4]));
+    memcpy((void *) &files[file_cnt++], argv[5], sizeof(argv[5]));
 
     // Add first peer to the list
-    struct sockaddr_in first_peer;
+    struct sockaddr_in meta;
+    peer_in first_peer;
+    memset(&meta, 0, sizeof(meta));
     memset(&first_peer, 0, sizeof(first_peer));
-    first_peer.sin_family = AF_INET;
-    first_peer.sin_addr.s_addr  = inet_addr(argv[3]); // argv[3] is first peer's ip
-    first_peer.sin_port   = htons(first_peer_port);
-    // first_peer.sin_addr.s_addr = INADDR_ANY; // zeros ip; i dunno y tho
-    printf("First peer's everything\t:\t%s:%u\n",
-           inet_ntoa(first_peer.sin_addr), ntohs(first_peer.sin_port));
+    meta.sin_family = AF_INET;
+    meta.sin_addr.s_addr  = inet_addr(argv[3]); // argv[3] is first peer's ip
+    meta.sin_port   = htons(meta_port);
+    // meta.sin_addr.s_addr = INADDR_ANY; // zeros ip; i dunno y tho
+    printf("First peer's meta\t\t:\t%s:%u\n",
+           inet_ntoa(meta.sin_addr), ntohs(meta.sin_port));
 
-    memcpy((void *) &peers[peer_cnt++], (void *) &first_peer, sizeof(struct sockaddr_in));
+    memcpy((void *) &first_peer.meta, (void *) &meta, sizeof(meta));
+    memcpy((void *) &peers[peer_cnt++], (void *) &first_peer, sizeof(first_peer));
 
     struct sockaddr_in server_sock_in;
     memset(&server_sock_in, 0, sizeof(server_sock_in));
@@ -64,7 +68,7 @@ void init_peer(int *master_fd_ptr, char **argv)
     server_sock_in.sin_port   = htons(my_port);
     server_sock_in.sin_addr.s_addr  = inet_addr(argv[1]); // argv[1] is server's ip
     // server_sock_in.sin_addr.s_addr = INADDR_ANY; // Means, socket is bound to all local interfaces
-    printf("Server's everything\t:\t%s:%u\n",
+    printf("Server's meta\t\t:\t%s:%u\n",
            inet_ntoa(server_sock_in.sin_addr), ntohs(server_sock_in.sin_port));
     puts("");        
 
@@ -94,7 +98,6 @@ void *rqst_handler(void *args)
     struct sockaddr_in *client_sock_in = (struct sockaddr_in *) params[1];
     // packet message; 
     int opcode;
-
     for (;;) {
         int len = recv(peer_sock_fd, &opcode, sizeof(int), 0); // Do I need any flags? Otherwise, change to read syscall
 
@@ -141,11 +144,13 @@ void *dispatcher(void *master_fild_ptr)
     int addrlen = sizeof(client_sock_in); // Define up front for later use in accept
 
     for (;;) {
+
         fd_set fd_collection;
         FD_ZERO(&fd_collection); // Clear the set
         FD_SET(master_fild, &fd_collection); // Add a new fd to the set
 
-        select(master_fild + 1, &fd_collection, NULL, NULL, NULL); // nfds is one more than the max value in fd_set; thus, we increment
+        int e = select(master_fild + 1, &fd_collection, NULL, NULL, NULL); // nfds is one more than the max value in fd_set; thus, we increment
+        if (e == -1) { perror("Failed to select"); }
         
         if(FD_ISSET(master_fild, &fd_collection)) {
             puts("CIR arrived, try to accept...");
@@ -171,7 +176,7 @@ void *dispatcher(void *master_fild_ptr)
             // !!! Handle if breaks
         }
     }
-    close(master_fild); // Is that eventually closed?
+    close(master_fild); // Is that eventually closed? No, it's not
     pthread_exit(NULL);
 }
 
@@ -183,24 +188,35 @@ void requester()
 {
     int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     struct sockaddr_in dest;
-    memcpy((void *) &dest, (void *) &peers[0], sizeof(peers[0]));
+    memcpy((void *) &dest, (void *) &peers[0].meta, sizeof(peers[0].meta));
     int addr_len = sizeof(dest);
 
     sleep(2); // Give the dispatcher time to start. Premature termination avoidance 
-    
+
     // TCP the first peer
     if (connect(socket_fd, (struct sockaddr *) &dest, addr_len) == - 1) {
         perror("Failed to TCP initial peer");
         exit(EXIT_FAILURE);
     };
 
-    send(socket_fd, &(int){ 1 }, sizeof(int), 0);
+    if ((send(socket_fd, &(int){ 1 }, sizeof(int), 0)) == -1)             { perror("Failed to send"); }
+    sleep(1); // Give him time to process the rqst
+    if ((send(socket_fd, personal_info, strlen(personal_info), 0)) == -1) { perror("Failed to send"); }
+    sleep(1); // Give him time to process the rqst
 
-    puts("");
-    send(socket_fd, personal_info, strlen(personal_info), 0);
-    send(socket_fd, &(int){ 237 }, sizeof(int), 0);
+    send(socket_fd, &peer_cnt, sizeof(peer_cnt), 0);
+    for (int i = 0; i < peer_cnt; ++i) {
+        char *peer_str = get_string(&peers[i]);
+        printf("Send peer\t:\t%s\n", peer_str);
+        send(socket_fd, peer_str, strlen(peer_str), 0); 
+        free(peer_str);
+    }
+        
+    sleep(1); // Otherwise, 237 may be treated as a part of some other peer
 
-    /* Issue: if the server thread is not yet dispatched, premature join may occure sry ... */
+    if ((send(socket_fd, &(int){ 237 }, sizeof(int), 0)) == -1)           { perror("Failed to send"); }
+
+    /* Issue: if the server thread is not yet dispatched, premature join may occure sry */
     
     printf("Thread cnt when join is reached\t:\t%d\n", thread_cnt);
     for (int i = 0; i < thread_cnt; ++i) {
