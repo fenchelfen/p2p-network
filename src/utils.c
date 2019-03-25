@@ -45,23 +45,29 @@ char *get_string(peer_in *peer)
     return string;
 }
 
+void add_file(char *filename)
+{
+    if (has_file(filename)) {
+        pthread_mutex_unlock(&mutex_files);
+        return;
+    }
+    pthread_mutex_lock(&mutex_files);
+    strcpy(files[file_cnt++], filename);
+    pthread_mutex_unlock(&mutex_files);
+}
+
 void join_peer(char *peer)
 {
     peer_in peer_struct = parse_data(peer);
-    if (is_present(&peer_struct)) {
+    if (has_peer(&peer_struct)) {
         return;
     }
-    printf("New acquaintance\t:\t%s %s:%u\n",
+    fprintf(out, "New acquaintance\t:\t%s %s:%u\n",
            peer_struct.name, inet_ntoa(peer_struct.meta.sin_addr), ntohs(peer_struct.meta.sin_port));
     memcpy((void *) &peers[peer_cnt++], (void *) &peer_struct, sizeof(peer_in));
 }
 
-void parse_incoming_peers(char *buf, int buf_size, int n)
-{
-}
-
-/* Returns 1 if present */
-int is_present(peer_in *peer)
+int has_peer(peer_in *peer)
 {
     for (int i = 0; i < peer_cnt; ++i) {
         if (strcmp(inet_ntoa(peer->meta.sin_addr), inet_ntoa(peers[i].meta.sin_addr)) == 0 &&
@@ -74,8 +80,37 @@ int is_present(peer_in *peer)
     return 0;
 }
 
+int has_file(char *string) {
+    for (int i = 0; i < file_cnt; ++i) {
+        if (strcmp(string, files[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void handle_0(int peer_sock_fd)
 {
+    char buf[1024] = { 0 };
+    int len = recv(peer_sock_fd, &buf, sizeof(buf), 0);
+
+    if (!has_file(buf)) {
+        send(peer_sock_fd, &(int){ -1 }, sizeof(int), 0);
+        return;
+    }
+
+    FILE *file = fopen(buf, "rb");
+    if (file == NULL) {
+        fprintf(out, "Couldn't open %s", buf);
+        perror("");
+        exit(EXIT_FAILURE);
+    }
+    int f_size = get_file_size(file);
+    send(peer_sock_fd, &f_size, sizeof(f_size), 0);
+
+    for (int i = 0; i < f_size; ++i) {
+        send(peer_sock_fd, &(int){ read_byte(file, i) }, sizeof(char), 0);
+    }
 }
 
 void handle_1(int peer_sock_fd)
@@ -83,41 +118,41 @@ void handle_1(int peer_sock_fd)
     char buf[1024] = { 0 };
     int len = recv(peer_sock_fd, &buf, sizeof(buf), 0);
     
-    printf("Received bytes\t\t:\t%d\n", len); // Alice keeps on sending 4 more byte than expected, weird
+    fprintf(out, "Received bytes\t\t:\t%d\n", len); // Alice keeps on sending 4 more byte than expected, weird
 
     int n = 0;
     len = recv(peer_sock_fd, &n, sizeof(n), 0); // Do I need any flags? Otherwise, change to read syscall
-    printf("Number of incoming peers:\t%d\n", n);
+    fprintf(out, "Number of incoming peers:\t%d\n", n);
     
     pthread_mutex_lock(&mutex); 
     join_peer(buf);
     for (int i = 0; i < n; ++i) {
         memset(buf, '\0', sizeof(buf));
         recv(peer_sock_fd, buf, sizeof(buf), 0);
-        puts(buf);
         join_peer(buf);
     }
-    puts("LIST PPEEER");
+    fprintf(out, "List of peers\n");
     for (int i = 0; i < peer_cnt; ++i) {
-        printf("Peer\t:\t%s %s:%u\n",
+        fprintf(out, "Peer\t\t\t:\t%s %s:%u\n",
                peers[i].name, inet_ntoa(peers[i].meta.sin_addr), ntohs(peers[i].meta.sin_port));
 
     }
     pthread_mutex_unlock(&mutex); 
 }
 
-char read_byte(char *filename, int n)
+int get_file_size(FILE *file)
+{
+    fseek(file, 0L, SEEK_END);
+    int n = ftell(file);
+    rewind(file);
+    return n;
+}
+
+char read_byte(FILE *file, int n)
 {
     char byte;
-    FILE *file = fopen(filename, "rb");
-    if (file == NULL) {
-        printf("Couldn't open %s", filename);
-        perror("");
-        exit(EXIT_FAILURE);
-    }
     fseek(file, n, 0);
     fread(&byte, 1, 1, file);
-    fclose(file);
     return byte;
 }
 

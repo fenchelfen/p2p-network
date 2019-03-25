@@ -3,11 +3,12 @@
 
 int main(int argc, char **argv)
 {
-   if (argc < 5) {
+   if (argc < 7) {
         puts("Your ip,\n"
              "Your port,\n"
              "First peer ip,\n"
              "First peer port,\n"
+             "Log file,\n"
              "Initial file\n");
         exit(EXIT_FAILURE);
     }
@@ -25,6 +26,12 @@ void init_peer(int *master_fd_ptr, char **argv)
         perror("Socket creation failed");
         return;
     }
+    if (strcmp(argv[5], "stdout") == 0) {
+        out = stdout;
+    } else {
+        out = fopen(argv[5], "w");
+    }
+    setbuf(out, NULL);
     thread_cnt = 0;
     peer_cnt = 0;
     file_cnt = 0;
@@ -41,10 +48,9 @@ void init_peer(int *master_fd_ptr, char **argv)
     strcat(personal_info, ":");
     strcat(personal_info, "\0");
 
-    puts(personal_info);
 
-    // Add init file to the list, argv[5] is the init file's name
-    memcpy((void *) &files[file_cnt++], argv[5], sizeof(argv[5]));
+    // Add init file to the list, argv[6] is the init file's name
+    memcpy((void *) &files[file_cnt++], argv[6], sizeof(argv[6]));
 
     // Add first peer to the list
     struct sockaddr_in meta;
@@ -56,7 +62,7 @@ void init_peer(int *master_fd_ptr, char **argv)
     meta.sin_addr.s_addr  = inet_addr(argv[3]); // argv[3] is first peer's ip
     meta.sin_port   = htons(meta_port);
     // meta.sin_addr.s_addr = INADDR_ANY; // zeros ip; i dunno y tho
-    printf("First peer's meta\t:\t%s %s:%u\n",
+    fprintf(out, "First peer's meta\t:\t%s %s:%u\n",
            first_peer.name, inet_ntoa(meta.sin_addr), ntohs(meta.sin_port));
 
     memcpy((void *) &first_peer.meta, (void *) &meta, sizeof(meta));
@@ -69,9 +75,8 @@ void init_peer(int *master_fd_ptr, char **argv)
     server_sock_in.sin_port   = htons(my_port);
     server_sock_in.sin_addr.s_addr  = inet_addr(argv[1]); // argv[1] is server's ip
     // server_sock_in.sin_addr.s_addr = INADDR_ANY; // Means, socket is bound to all local interfaces
-    printf("Server's meta\t\t:\t%s:%u\n",
+    fprintf(out, "Server's meta\t\t:\t%s:%u\n\n",
            inet_ntoa(server_sock_in.sin_addr), ntohs(server_sock_in.sin_port));
-    puts("");        
 
     if (setsockopt(*master_fd_ptr, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int)) < 0)
         perror("setsockopt(SO_REUSEADDR) failed");
@@ -92,48 +97,31 @@ void *rqst_handler(void *args)
     void **params = (void **) args;
     int peer_sock_fd = *((int *) params[0]);
 
-    printf("Handler is dispatched\t:\t%ld\n", time(NULL));
-    printf("Thread's id          \t:\t%ld\n", syscall(__NR_gettid));
-    printf("Peer socket fild     \t:\t%d\n", peer_sock_fd);
+    fprintf(out, "Handler is dispatched\t:\t%ld\n", time(NULL));
+    fprintf(out, "Thread's id          \t:\t%ld\n", syscall(__NR_gettid));
+    fprintf(out, "Peer socket fild     \t:\t%d\n", peer_sock_fd);
 
     struct sockaddr_in *client_sock_in = (struct sockaddr_in *) params[1];
-    // packet message; 
     int opcode;
+
     for (;;) {
         int len = recv(peer_sock_fd, &opcode, sizeof(int), 0); // Do I need any flags? Otherwise, change to read syscall
-
-        printf("OPCODE\t\t\t:\t%d\n", opcode);
-
+        fprintf(out, "OPCODE\t\t\t:\t%d\n", opcode);
         if (opcode == 237) {
-            printf("Conn closure rqst arrived;\n"
+            fprintf(out, "Conn closure rqst arrived;\n"
                    "Release fild\t\t:\t%d\n", peer_sock_fd);
             break;
+        } else if (
+            opcode == 0) {
+            handle_0(peer_sock_fd);
         } else if (
             opcode == 1) {
             handle_1(peer_sock_fd);
         }
-        // else if (
-        //     strcmp(message.cmd, "JOIN") == 0) {
-        //     printf("JOIN rqst from\t%s:%u\n",
-        //            inet_ntoa(message.meta.sin_addr), ntohs(message.meta.sin_port));
-
-        //     memcpy((void *) &peers[peer_cnt++], (void *) &message.meta, sizeof(message.meta));
-        // } else if (
-        //     strcmp(message.cmd, "QUER") == 0) {
-        //     // Compare against your list of files
-        // } else if (
-        //     strcmp(message.cmd, "LIST") == 0) {
-        //     send(peer_sock_fd, &peers, sizeof(peers), 0);
-        // } else if (
-        //     strcmp(message.cmd, "FGET") == 0) {
-        //     char byte = read_byte(message.filename, message.byte_n);
-        //     send(peer_sock_fd, &byte, 1, 0);
-        // }
     }
     free(client_sock_in);
     close(peer_sock_fd);
     --thread_cnt;
-    puts("Bye");
     pthread_exit(NULL);
 }
 
@@ -154,7 +142,7 @@ void *dispatcher(void *master_fild_ptr)
         if (e == -1) { perror("Failed to select"); }
         
         if(FD_ISSET(master_fild, &fd_collection)) {
-            puts("CIR arrived, try to accept...");
+            fprintf(out, "CIR arrived, try to accept...\n");
 
             memset(&client_sock_in, 0, addrlen);
             int peer_sock_fd = accept(master_fild, (struct sockaddr *) &client_sock_in, &addrlen);
@@ -165,7 +153,7 @@ void *dispatcher(void *master_fild_ptr)
                 continue;
             }
 
-            printf("Established new conn\t:\t%s:%u\n",
+            fprintf(out, "Established new conn\t:\t%s:%u\n",
                    inet_ntoa(client_sock_in.sin_addr), ntohs(client_sock_in.sin_port));
             
             void **params[2];
@@ -174,15 +162,10 @@ void *dispatcher(void *master_fild_ptr)
             memcpy(params[1], (void *) &client_sock_in, sizeof(client_sock_in));
 
             pthread_create(&threads[thread_cnt++], NULL, &rqst_handler, &params);
-            // !!! Handle if breaks
         }
     }
     close(master_fild); // Is that eventually closed? No, it's not
     pthread_exit(NULL);
-}
-
-void *retr_byte_handler(void *args)
-{
 }
 
 void requester()
@@ -194,42 +177,68 @@ void requester()
 
     sleep(2); // Give the dispatcher time to start. Premature termination avoidance 
 
-    // TCP the first peer
     if (connect(socket_fd, (struct sockaddr *) &dest, addr_len) == - 1) {
         perror("Failed to TCP initial peer");
         exit(EXIT_FAILURE);
     };
 
     if ((send(socket_fd, &(int){ 1 }, sizeof(int), 0)) == -1)             { perror("Failed to send"); }
-    sleep(1); // Give him time to process the rqst
+    usleep(100000); // Give him time to process the rqst
     if ((send(socket_fd, personal_info, strlen(personal_info), 0)) == -1) { perror("Failed to send"); }
-    sleep(1); // Give him time to process the rqst
+    usleep(100000); // Give him time to process the rqst
 
     send(socket_fd, &peer_cnt, sizeof(peer_cnt), 0);
     pthread_mutex_lock(&mutex); 
     for (int i = 0; i < peer_cnt; ++i) {
         char *peer_str = get_string(&peers[i]);
-        printf("Send peer\t\t:\t%s\n", peer_str);
+        fprintf(out, "Send peer\t\t:\t%s\n", peer_str);
         send(socket_fd, peer_str, strlen(peer_str), 0); 
         free(peer_str);
-        sleep(1);
+        usleep(100000);
     }
     pthread_mutex_unlock(&mutex); 
 
-    sleep(3); // Otherwise, 237 may be treated as a part of some other peer
+    char filename[10];
+    for (;;) {
+        puts("Which file do you want?\t:\t");
+        scanf("%s", filename);
 
-    if ((send(socket_fd, &(int){ 237 }, sizeof(int), 0)) == -1)           { perror("Failed to send"); }
+        if (strcmp(filename, "-") == 0) {
+            break;
+        }
+
+        send(socket_fd, &(int){ 0 }, sizeof(int), 0);
+        usleep(100000);
+        send(socket_fd, filename, sizeof(filename), 0);
+
+
+        int file_len = 0;
+        recv(socket_fd, &file_len, sizeof(int), 0);
+        
+        if (file_len == -1) {
+            puts("No such file");
+        }
+
+        fprintf(out, "File len is\t\t\t:\t%d\n", file_len);
+        
+        for (int i = 0; i < file_len; ++i) {
+            char byte = 0;
+            recv(socket_fd, &byte, sizeof(char), 0);
+            putchar(byte);
+            fflush(stdout);
+        }
+        add_file(filename);
+        puts("");
+    }
+
+//    sleep(3); // Otherwise, 237 may be treated as a part of some other peer
+
+    send(socket_fd, &(int){ 237 }, sizeof(int), 0);
 
     /* Issue: if the server thread is not yet dispatched, premature join may occure sry */
     
-    printf("Thread cnt when join is reached\t:\t%d\n", thread_cnt);
+    fprintf(out, "Thread cnt when join is reached\t:\t%d\n", thread_cnt);
     for (int i = 0; i < thread_cnt; ++i) {
         pthread_join(threads[i], NULL);
     }
-    // Init a separate socket
-    // LIST
-    // JOIN
-    // for each peer:
-    // QUER if the file is present
-    // true -> FGET i-th byte, 
 }
