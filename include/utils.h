@@ -24,7 +24,7 @@ int my_port;
 char files[8]; // Store filenames here, statically 
 int file_cnt;
 
-char *personal_info;
+char personal_info[1024];
 
 void *dispatcher(void *);
 void *rqst_handler(void*);
@@ -33,10 +33,12 @@ char read_byte(char *, int);
 void init_peer(int *, char **);
 
 void join_peer(char *);
+void handle_0(int);
 void handle_1(int);
 
 peer_in parse_data(char *);
 char *get_string(peer_in *);
+int is_present(peer_in *);
 
 pthread_t threads[10];
 int thread_cnt;

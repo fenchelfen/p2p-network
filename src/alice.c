@@ -31,7 +31,7 @@ void init_peer(int *master_fd_ptr, char **argv)
     my_port = strtol(argv[2], NULL, 10);
     int meta_port = strtol(argv[4], NULL, 10);
 
-    personal_info = malloc(sizeof("alice") + sizeof(argv[1]) + sizeof(argv[2]) + 3); // 3 is for colons
+    // personal_info = malloc(sizeof("alice") + sizeof(argv[1]) + sizeof(argv[2]) + 3); // 3 is for colons
     memset(personal_info, '\0', strlen(personal_info));
     strcat(personal_info, "alice");
     strcat(personal_info, ":");
@@ -51,12 +51,13 @@ void init_peer(int *master_fd_ptr, char **argv)
     peer_in first_peer;
     memset(&meta, 0, sizeof(meta));
     memset(&first_peer, 0, sizeof(first_peer));
+    strcpy(first_peer.name, "friend");
     meta.sin_family = AF_INET;
     meta.sin_addr.s_addr  = inet_addr(argv[3]); // argv[3] is first peer's ip
     meta.sin_port   = htons(meta_port);
     // meta.sin_addr.s_addr = INADDR_ANY; // zeros ip; i dunno y tho
-    printf("First peer's meta\t\t:\t%s:%u\n",
-           inet_ntoa(meta.sin_addr), ntohs(meta.sin_port));
+    printf("First peer's meta\t:\t%s %s:%u\n",
+           first_peer.name, inet_ntoa(meta.sin_addr), ntohs(meta.sin_port));
 
     memcpy((void *) &first_peer.meta, (void *) &meta, sizeof(meta));
     memcpy((void *) &peers[peer_cnt++], (void *) &first_peer, sizeof(first_peer));
@@ -101,11 +102,11 @@ void *rqst_handler(void *args)
     for (;;) {
         int len = recv(peer_sock_fd, &opcode, sizeof(int), 0); // Do I need any flags? Otherwise, change to read syscall
 
-        printf("OPCODE\t:\t%d\n", opcode);
+        printf("OPCODE\t\t\t:\t%d\n", opcode);
 
         if (opcode == 237) {
             printf("Conn closure rqst arrived;\n"
-                   "Release fild\t:\t%d\n", peer_sock_fd);
+                   "Release fild\t\t:\t%d\n", peer_sock_fd);
             break;
         } else if (
             opcode == 1) {
@@ -205,14 +206,17 @@ void requester()
     sleep(1); // Give him time to process the rqst
 
     send(socket_fd, &peer_cnt, sizeof(peer_cnt), 0);
+    pthread_mutex_lock(&mutex); 
     for (int i = 0; i < peer_cnt; ++i) {
         char *peer_str = get_string(&peers[i]);
-        printf("Send peer\t:\t%s\n", peer_str);
+        printf("Send peer\t\t:\t%s\n", peer_str);
         send(socket_fd, peer_str, strlen(peer_str), 0); 
         free(peer_str);
+        sleep(1);
     }
-        
-    sleep(1); // Otherwise, 237 may be treated as a part of some other peer
+    pthread_mutex_unlock(&mutex); 
+
+    sleep(3); // Otherwise, 237 may be treated as a part of some other peer
 
     if ((send(socket_fd, &(int){ 237 }, sizeof(int), 0)) == -1)           { perror("Failed to send"); }
 
