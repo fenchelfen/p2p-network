@@ -198,11 +198,12 @@ void requester()
 
             if (connect(socket_fd, (struct sockaddr *) &dest, addr_len) == - 1) {
                 perror("Failed to TCP initial peer");
-                exit(EXIT_FAILURE);
+                // exit(EXIT_FAILURE);
+                continue;
             };
             
             if ((send(socket_fd, &(int){ 1 }, sizeof(int), 0)) == -1)             { perror("Failed to send"); }
-            usleep(100000); // Give him time to process the rqst
+            usleep(1000000); // Give him time to process the rqst
             if ((send(socket_fd, personal_info, strlen(personal_info), 0)) == -1) { perror("Failed to send"); }
             usleep(100000); // Give him time to process the rqst
             
@@ -221,8 +222,9 @@ void requester()
                 break;
             }
             send(socket_fd, &(int){ 0 }, sizeof(int), 0);
-            usleep(100000);
+            usleep(1000000);
             send(socket_fd, filename, sizeof(filename), 0);
+            usleep(1000000);
         
             int file_len = 0;
             recv(socket_fd, &file_len, sizeof(int), 0);
@@ -233,19 +235,17 @@ void requester()
             }
             // fprintf(out, "File len is\t\t\t:\t%d\n", file_len);
             
-            int file = open(filename, O_APPEND | O_CREAT | O_WRONLY, 0666);
-            if (file_len != -1) {
-                for (int i = 0; i < file_len; ++i) {
-                    char byte = 0;
-                    recv(socket_fd, &byte, sizeof(char), 0);
-                    putchar(byte);
-                    write(file, &byte, sizeof(byte));
-                    fflush(stdout);
-                }
+            umask(0);
+            int file = open(filename, O_APPEND | O_CREAT | O_WRONLY, 0777);
+            for (int i = 0; i < file_len; ++i) {
+                char byte = 0;
+                recv(socket_fd, &byte, sizeof(char), 0);
+                putchar(byte);
+                write(file, &byte, sizeof(byte));
             }
             add_file(filename);
-            puts("");
-            close(socket_fd);
+            close(file);
+            break;
         }
     }
     // sleep(3); // Otherwise, 237 may be treated as a part of some other peer
