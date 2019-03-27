@@ -52,14 +52,16 @@ void add_file(char *filename)
         return;
     }
     pthread_mutex_lock(&mutex_files);
-    strcpy(files[file_cnt++], filename);
+    files[file_cnt] = malloc(sizeof(char)*strlen(filename));
+    strcpy(files[file_cnt], filename);
+    files[++file_cnt] = NULL;
     pthread_mutex_unlock(&mutex_files);
 }
 
 void join_peer(char *peer)
 {
     peer_in peer_struct = parse_data(peer);
-    if (has_peer(&peer_struct)) {
+    if (has_peer(&peer_struct) || strcmp(peer, personal_info) == 0) {
         return;
     }
     fprintf(out, "New acquaintance\t:\t%s %s:%u\n",
@@ -99,9 +101,11 @@ void handle_0(int peer_sock_fd)
         return;
     }
 
+    puts("File is ");
+    puts(buf);
     FILE *file = fopen(buf, "rb");
     if (file == NULL) {
-        fprintf(out, "Couldn't open %s", buf);
+        fprintf(out, "Couldn't open %s\n", buf);
         perror("");
         exit(EXIT_FAILURE);
     }
@@ -154,5 +158,22 @@ char read_byte(FILE *file, int n)
     fseek(file, n, 0);
     fread(&byte, 1, 1, file);
     return byte;
+}
+
+void update_filenames(char *source)
+{
+    DIR *d = opendir(source);;
+    struct dirent *dir;
+    int k = 0;
+    if (d) {
+        while((dir = readdir(d)) != NULL) {
+            if (strcmp(dir->d_name, ".") == 0 ||
+                strcmp(dir->d_name, "..") == 0) {
+                continue;
+            }
+            add_file(dir->d_name);
+        }
+    }
+    closedir(d);
 }
 

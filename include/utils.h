@@ -3,6 +3,8 @@
 #include <sys/socket.h>
 // #include <netinet/in.h>
 // #include <netdb.h>
+#include <fcntl.h>
+#include <dirent.h>
 #include <memory.h>
 #include <err.h>
 #include <unistd.h>
@@ -18,13 +20,14 @@ typedef struct {
 
 
 FILE *out; // Where administrative information is printed
+char *working_dir;
 
 peer_in peers[8];
 int peer_cnt;
 
 int my_port;
 
-char files[8][10]; // Store filenames here, statically 
+char **files; // Store filenames here, dynamically
 int file_cnt;
 
 char personal_info[1024];
@@ -45,6 +48,7 @@ int get_file_size(FILE *);
 char read_byte(FILE *, int);
 int has_peer(peer_in *);
 int has_file(char *);
+void update_filenames(char *);
 
 pthread_t threads[10];
 int thread_cnt;

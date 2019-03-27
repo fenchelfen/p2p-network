@@ -3,21 +3,20 @@
 
 int main(int argc, char **argv)
 {
-   if (argc < 7) {
-        puts("Your ip,\n"
-             "Your port,\n"
-             "First peer ip,\n"
-             "First peer port,\n"
-             "Log file,\n"
-             "Initial file\n");
-        exit(EXIT_FAILURE);
-    }
-    int master_fild = 0;
-    init_peer(&master_fild, argv);
-    pthread_t dispatcher_t;
-    pthread_create(&threads[thread_cnt++], NULL, &dispatcher, &master_fild);
-    requester();
-    return 0;
+    if (argc < 6) {
+         puts("Your ip,\n"
+              "Your port,\n"
+              "First peer ip,\n"
+              "First peer port,\n"
+              "Log output\n");
+         exit(EXIT_FAILURE);
+     }
+     int master_fild = 0;
+     init_peer(&master_fild, argv);
+     pthread_t dispatcher_t;
+     pthread_create(&threads[thread_cnt++], NULL, &dispatcher, &master_fild);
+     requester();
+     return 0;
 }
 
 void init_peer(int *master_fd_ptr, char **argv)
@@ -34,9 +33,19 @@ void init_peer(int *master_fd_ptr, char **argv)
     setbuf(out, NULL);
     thread_cnt = 0;
     peer_cnt = 0;
-    file_cnt = 0;
     my_port = strtol(argv[2], NULL, 10);
     int meta_port = strtol(argv[4], NULL, 10);
+
+    working_dir = malloc(PATH_MAX*sizeof(char));
+    getcwd(working_dir, PATH_MAX);
+
+    file_cnt = 0;
+    files = malloc(20*sizeof(char *));
+    update_filenames(working_dir);
+    int k = 0;
+    while(files[k] != NULL) {
+        puts(files[k++]);
+    }
 
     // personal_info = malloc(sizeof("alice") + sizeof(argv[1]) + sizeof(argv[2]) + 3); // 3 is for colons
     memset(personal_info, '\0', strlen(personal_info));
@@ -49,15 +58,15 @@ void init_peer(int *master_fd_ptr, char **argv)
     strcat(personal_info, "\0");
 
 
-    // Add init file to the list, argv[6] is the init file's name
-    memcpy((void *) &files[file_cnt++], argv[6], sizeof(argv[6]));
+    // // Add init file to the list, argv[6] is the init file's name
+    // memcpy((void *) &files[file_cnt++], argv[6], sizeof(argv[6]));
 
     // Add first peer to the list
     struct sockaddr_in meta;
     peer_in first_peer;
     memset(&meta, 0, sizeof(meta));
     memset(&first_peer, 0, sizeof(first_peer));
-    strcpy(first_peer.name, "friend");
+    strcpy(first_peer.name, "alice");
     meta.sin_family = AF_INET;
     meta.sin_addr.s_addr  = inet_addr(argv[3]); // argv[3] is first peer's ip
     meta.sin_port   = htons(meta_port);
@@ -170,75 +179,83 @@ void *dispatcher(void *master_fild_ptr)
 
 void requester()
 {
-    int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    struct sockaddr_in dest;
-    memcpy((void *) &dest, (void *) &peers[0].meta, sizeof(peers[0].meta));
-    int addr_len = sizeof(dest);
-
     sleep(2); // Give the dispatcher time to start. Premature termination avoidance 
-
-    if (connect(socket_fd, (struct sockaddr *) &dest, addr_len) == - 1) {
-        perror("Failed to TCP initial peer");
-        exit(EXIT_FAILURE);
-    };
-
-    if ((send(socket_fd, &(int){ 1 }, sizeof(int), 0)) == -1)             { perror("Failed to send"); }
-    usleep(100000); // Give him time to process the rqst
-    if ((send(socket_fd, personal_info, strlen(personal_info), 0)) == -1) { perror("Failed to send"); }
-    usleep(100000); // Give him time to process the rqst
-
-    send(socket_fd, &peer_cnt, sizeof(peer_cnt), 0);
-    pthread_mutex_lock(&mutex); 
-    for (int i = 0; i < peer_cnt; ++i) {
-        char *peer_str = get_string(&peers[i]);
-        fprintf(out, "Send peer\t\t:\t%s\n", peer_str);
-        send(socket_fd, peer_str, strlen(peer_str), 0); 
-        free(peer_str);
-        usleep(100000);
-    }
-    pthread_mutex_unlock(&mutex); 
-
-    char filename[10];
     for (;;) {
+        char filename[1024];
         puts("Which file do you want?\t:\t");
         scanf("%s", filename);
 
-        if (strcmp(filename, "-") == 0) {
-            break;
-        }
+        for(int j = 0; j < peer_cnt; ++j) {
+            int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            struct sockaddr_in dest;
+    
+            memcpy((void *) &dest, (void *) &peers[j].meta, sizeof(peers[j].meta));
+            int addr_len = sizeof(dest);
 
-        send(socket_fd, &(int){ 0 }, sizeof(int), 0);
-        usleep(100000);
-        send(socket_fd, filename, sizeof(filename), 0);
+            fprintf(out, "RQST file %s\t:\t%s:%u\n", filename,
+                   inet_ntoa(dest.sin_addr), ntohs(dest.sin_port));
+ 
 
-
-        int file_len = 0;
-        recv(socket_fd, &file_len, sizeof(int), 0);
+            if (connect(socket_fd, (struct sockaddr *) &dest, addr_len) == - 1) {
+                perror("Failed to TCP initial peer");
+                exit(EXIT_FAILURE);
+            };
+            
+            if ((send(socket_fd, &(int){ 1 }, sizeof(int), 0)) == -1)             { perror("Failed to send"); }
+            usleep(100000); // Give him time to process the rqst
+            if ((send(socket_fd, personal_info, strlen(personal_info), 0)) == -1) { perror("Failed to send"); }
+            usleep(100000); // Give him time to process the rqst
+            
+            send(socket_fd, &peer_cnt, sizeof(peer_cnt), 0);
+            pthread_mutex_lock(&mutex); 
+            for (int i = 0; i < peer_cnt; ++i) {
+                char *peer_str = get_string(&peers[i]);
+                fprintf(out, "Send peer\t\t:\t%s\n", peer_str);
+                send(socket_fd, peer_str, strlen(peer_str), 0); 
+                free(peer_str);
+                usleep(100000);
+            }
+            pthread_mutex_unlock(&mutex); 
         
-        if (file_len == -1) {
-            puts("No such file");
-        }
-
-        fprintf(out, "File len is\t\t\t:\t%d\n", file_len);
+            if (strcmp(filename, "-") == 0) {
+                break;
+            }
+            send(socket_fd, &(int){ 0 }, sizeof(int), 0);
+            usleep(100000);
+            send(socket_fd, filename, sizeof(filename), 0);
         
-        for (int i = 0; i < file_len; ++i) {
-            char byte = 0;
-            recv(socket_fd, &byte, sizeof(char), 0);
-            putchar(byte);
-            fflush(stdout);
+            int file_len = 0;
+            recv(socket_fd, &file_len, sizeof(int), 0);
+            
+            if (file_len == -1) {
+                send(socket_fd, &(int){ 237 }, sizeof(int), 0);
+                continue;
+            }
+            // fprintf(out, "File len is\t\t\t:\t%d\n", file_len);
+            
+            int file = open(filename, O_APPEND | O_CREAT | O_WRONLY, 0666);
+            if (file_len != -1) {
+                for (int i = 0; i < file_len; ++i) {
+                    char byte = 0;
+                    recv(socket_fd, &byte, sizeof(char), 0);
+                    putchar(byte);
+                    write(file, &byte, sizeof(byte));
+                    fflush(stdout);
+                }
+            }
+            add_file(filename);
+            puts("");
+            close(socket_fd);
         }
-        add_file(filename);
-        puts("");
     }
-
-//    sleep(3); // Otherwise, 237 may be treated as a part of some other peer
-
-    send(socket_fd, &(int){ 237 }, sizeof(int), 0);
-
+    // sleep(3); // Otherwise, 237 may be treated as a part of some other peer
     /* Issue: if the server thread is not yet dispatched, premature join may occure sry */
     
     fprintf(out, "Thread cnt when join is reached\t:\t%d\n", thread_cnt);
     for (int i = 0; i < thread_cnt; ++i) {
         pthread_join(threads[i], NULL);
     }
+    free(files);
+    free(working_dir);
 }
+    
