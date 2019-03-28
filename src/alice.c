@@ -112,6 +112,11 @@ void *rqst_handler(void *args)
             break;
         };
         fprintf(out, "OPCODE\t\t\t:\t%d\n", opcode);
+        if (opcode == -237) {
+            fprintf(out, "Close conn with\t\t:\t%s:%d\n"
+                         "Got a cycle\n", inet_ntoa(client_sock_in->sin_addr), ntohs(client_sock_in->sin_port));
+            break;
+        }
 
         if (opcode == 237) {
             fprintf(out, "Conn closure rqst arrived\n"
@@ -128,6 +133,7 @@ void *rqst_handler(void *args)
                     inet_ntoa(client_sock_in->sin_addr), ntohs(client_sock_in->sin_port));
             handle_1(peer_sock_fd);
         }
+        opcode = -237;
     }
     free(client_sock_in);
     close(peer_sock_fd);
@@ -231,6 +237,8 @@ void requester()
         
             int file_len = 0;
             recv(socket_fd, &file_len, sizeof(int), 0);
+
+            fprintf(out, "Incoming file length\t:\t%d\n", file_len);
             
             if (file_len == -1) {
                 send(socket_fd, &(int){ 237 }, sizeof(int), 0);
@@ -239,10 +247,26 @@ void requester()
             
             umask(0);
             int file = open(filename, O_APPEND | O_CREAT | O_WRONLY, 0777);
-            for (int i = 0; i < file_len; ++i) {
+            // for (int i = 0; i < file_len; ++i) {
+            //     char byte = 0;
+            //     recv(socket_fd, &byte, sizeof(char), 0);
+            //     putchar(byte);
+            //     write(file, &byte, sizeof(byte));
+            // }
+            int k = 0;
+            for (; k < file_len;) {
                 char byte = 0;
-                recv(socket_fd, &byte, sizeof(char), 0);
+                recv(socket_fd, &byte, sizeof(byte), 0);
                 putchar(byte);
+                putchar('\n');
+                printf("Cnt\t\t\t:\t%d\n", k);
+                if (byte == '\0') {
+                    ++k;
+                    // putchar(' ');
+                    write(file, &(int){ ' ' }, sizeof(char));
+                    continue;
+                }
+                // putchar(byte);
                 write(file, &byte, sizeof(byte));
             }
             send(socket_fd, &(int){ 237 }, sizeof(int), 0);

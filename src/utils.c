@@ -109,12 +109,20 @@ void handle_0(int peer_sock_fd)
         exit(EXIT_FAILURE);
     }
     fprintf(out, "Start sending %s\n", buf);
-    int f_size = get_file_size(file);
+    // int f_size = get_file_size(file);
+    int f_size = get_file_size_in_words(file);
+    fprintf(out, "File size is %d\n", f_size);
     send(peer_sock_fd, &f_size, sizeof(f_size), 0);
 
     for (int i = 0; i < f_size; ++i) {
-        send(peer_sock_fd, &(int){ read_byte(file, i) }, sizeof(char), 0);
+         char *word = read_word(file, i);
+         puts(word);
+         send(peer_sock_fd, word, strlen(word)+1, 0);
+         free(word);
     }
+    // for (int i = 0; i < f_size; ++i) {
+    //     send(peer_sock_fd, &(int){ read_byte(file, i) }, sizeof(char), 0);
+    // }
 }
 
 void handle_1(int peer_sock_fd)
@@ -138,7 +146,6 @@ void handle_1(int peer_sock_fd)
     for (int i = 0; i < peer_cnt; ++i) {
         fprintf(out, "Peer\t\t\t:\t%s %s:%u\n",
                 peers[i].name, inet_ntoa(peers[i].meta.sin_addr), ntohs(peers[i].meta.sin_port));
-
     }
 }
 
@@ -150,12 +157,37 @@ int get_file_size(FILE *file)
     return n;
 }
 
+int get_file_size_in_words(FILE *file)
+{
+    char buf[512];
+    int k = 0;
+    while ((fscanf(file, "%s", buf)) != EOF) {
+        ++k;
+    }
+    rewind(file);
+    return k;
+}
+
 char read_byte(FILE *file, int n)
 {
     char byte;
     fseek(file, n, 0);
     fread(&byte, 1, 1, file);
     return byte;
+}
+
+char *read_word(FILE *file, int n)
+{
+    char *word;
+    char buf[512] = { 0 };
+    int k = 0;
+    while ((fscanf(file, "%s", buf)) != EOF && k < n) {
+        ++k;
+    }
+    word = malloc(sizeof(char)*(strlen(buf)+1));
+    strcpy(word, buf);
+    rewind(file);
+    return word;
 }
 
 void update_filenames(char *source)
