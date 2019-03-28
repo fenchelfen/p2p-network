@@ -100,15 +100,15 @@ void handle_0(int peer_sock_fd)
         send(peer_sock_fd, &(int){ -1 }, sizeof(int), 0);
         return;
     }
+    fprintf(out, "RQSTed file %s\n", buf);
 
-    puts("File is ");
-    puts(buf);
     FILE *file = fopen(buf, "rb");
     if (file == NULL) {
-        fprintf(out, "Couldn't open %s\n", buf);
-        perror("");
+        fprintf(out, "Filed to open %s\n", buf);
+        fprintf(out, "%s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
+    fprintf(out, "Start sending %s\n", buf);
     int f_size = get_file_size(file);
     send(peer_sock_fd, &f_size, sizeof(f_size), 0);
 
@@ -120,12 +120,10 @@ void handle_0(int peer_sock_fd)
 void handle_1(int peer_sock_fd)
 {
     char buf[1024] = { 0 };
-    int len = recv(peer_sock_fd, &buf, sizeof(buf), 0);
+    recv(peer_sock_fd, &buf, sizeof(buf), 0);
     
-    fprintf(out, "Received bytes\t\t:\t%d\n", len); // Alice keeps on sending 4 more byte than expected, weird
-
     int n = 0;
-    len = recv(peer_sock_fd, &n, sizeof(n), 0); // Do I need any flags? Otherwise, change to read syscall
+    recv(peer_sock_fd, &n, sizeof(n), 0);
     fprintf(out, "Number of incoming peers:\t%d\n", n);
     
     pthread_mutex_lock(&mutex); 
@@ -135,13 +133,13 @@ void handle_1(int peer_sock_fd)
         recv(peer_sock_fd, buf, sizeof(buf), 0);
         join_peer(buf);
     }
-    fprintf(out, "List of peers\n");
+    pthread_mutex_unlock(&mutex); 
+    fprintf(out, "List of my peers\n");
     for (int i = 0; i < peer_cnt; ++i) {
         fprintf(out, "Peer\t\t\t:\t%s %s:%u\n",
-               peers[i].name, inet_ntoa(peers[i].meta.sin_addr), ntohs(peers[i].meta.sin_port));
+                peers[i].name, inet_ntoa(peers[i].meta.sin_addr), ntohs(peers[i].meta.sin_port));
 
     }
-    pthread_mutex_unlock(&mutex); 
 }
 
 int get_file_size(FILE *file)
