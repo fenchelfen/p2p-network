@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include <syscall.h>
 #include <time.h>
+#include "hash.h"
 
 typedef struct {
     char name[16];
@@ -25,6 +26,9 @@ char *working_dir;
 
 peer_in peers[8];
 int peer_cnt;
+
+hashtable_t *cur_hosts;
+hashtable_t *blacklist;
 
 int my_port;
 
@@ -53,9 +57,20 @@ int has_peer(peer_in *);
 int has_file(char *);
 void update_filenames(char *);
 
+void _sync(int);
+int _fget(int, char *);
+
+int is_blacklisted(char *);
+void add_to_blacklist(char *);
+void inc_host_conn(char *);
+void dec_host_conn(char *);
+
 pthread_t threads[10];
 int thread_cnt;
 
 pthread_mutex_t mutex;
 pthread_mutex_t mutex_files;
+
+pthread_mutex_t mutex_blacklist;
+pthread_mutex_t mutex_cur_hosts;
 

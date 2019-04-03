@@ -17,7 +17,6 @@ peer_in parse_data(char *string)
     addr_in.sin_family = AF_INET;
     addr_in.sin_addr.s_addr = inet_addr(ip);
     addr_in.sin_port   = htons(port);
-    // addr_in.sin_addr.s_addr = INADDR_ANY; // zeros ip, y tho i dunno
     memcpy((void *) &peer.meta, (void *) &addr_in, sizeof(addr_in));
     memcpy((void *) peer.name, (void *) name, sizeof(peer.name));  
     return peer;
@@ -25,7 +24,6 @@ peer_in parse_data(char *string)
 
 char *get_string(peer_in *peer)
 {
-    // char *string = malloc(sizeof(name) + sizeof(ip) + sizeof(port_s));
     char *string = malloc(sizeof(char)*1024);
     memset(string, '\0', 1024);
     char name[16];
@@ -60,13 +58,16 @@ void add_file(char *filename)
 
 void join_peer(char *peer)
 {
+    pthread_mutex_lock(&mutex); 
     peer_in peer_struct = parse_data(peer);
     if (has_peer(&peer_struct) || strcmp(peer, personal_info) == 0) {
+        pthread_mutex_unlock(&mutex); 
         return;
     }
     fprintf(out, "New acquaintance\t:\t%s %s:%u\n",
            peer_struct.name, inet_ntoa(peer_struct.meta.sin_addr), ntohs(peer_struct.meta.sin_port));
     memcpy((void *) &peers[peer_cnt++], (void *) &peer_struct, sizeof(peer_in));
+    pthread_mutex_unlock(&mutex); 
 }
 
 int has_peer(peer_in *peer)
@@ -109,7 +110,6 @@ void handle_0(int peer_sock_fd)
         exit(EXIT_FAILURE);
     }
     fprintf(out, "Start sending %s\n", buf);
-    // int f_size = get_file_size(file);
     int f_size = get_file_size_in_words(file);
     fprintf(out, "File size is %d\n", f_size);
     send(peer_sock_fd, &f_size, sizeof(f_size), 0);
@@ -120,34 +120,136 @@ void handle_0(int peer_sock_fd)
          send(peer_sock_fd, word, strlen(word)+1, 0);
          free(word);
     }
-    // for (int i = 0; i < f_size; ++i) {
-    //     send(peer_sock_fd, &(int){ read_byte(file, i) }, sizeof(char), 0);
-    // }
 }
 
 void handle_1(int peer_sock_fd)
 {
     char buf[1024] = { 0 };
-    recv(peer_sock_fd, &buf, sizeof(buf), 0);
-    
+    if (recv(peer_sock_fd, &buf, sizeof(buf), 0) == -1) {
+        return;
+    }
     int n = 0;
-    recv(peer_sock_fd, &n, sizeof(n), 0);
+    if (recv(peer_sock_fd, &n, sizeof(n), 0) == -1) {
+        return;
+    }
+
     fprintf(out, "Number of incoming peers:\t%d\n", n);
     
-    pthread_mutex_lock(&mutex); 
     join_peer(buf);
     for (int i = 0; i < n; ++i) {
         memset(buf, '\0', sizeof(buf));
-        recv(peer_sock_fd, buf, sizeof(buf), 0);
+        if (recv(peer_sock_fd, buf, sizeof(buf), 0) == -1) {
+            return;
+        }
         join_peer(buf);
     }
-    pthread_mutex_unlock(&mutex); 
     fprintf(out, "List of my peers\n");
     for (int i = 0; i < peer_cnt; ++i) {
         fprintf(out, "Peer\t\t\t:\t%s %s:%u\n",
                 peers[i].name, inet_ntoa(peers[i].meta.sin_addr), ntohs(peers[i].meta.sin_port));
     }
 }
+
+void _sync(int socket_fd)
+{
+    send(socket_fd, &(int){ 1 }, sizeof(int), 0);
+    sleep(1);
+    send(socket_fd, personal_info, strlen(personal_info), 0);
+    sleep(1);
+
+    send(socket_fd, &peer_cnt, sizeof(peer_cnt), 0);
+    sleep(1);
+    for (int i = 0; i < peer_cnt; ++i) {
+        char *peer_str = get_string(&peers[i]);
+        fprintf(out, "Send peer\t\t:\t%s\n", peer_str);
+        send(socket_fd, peer_str, strlen(peer_str), 0); 
+        free(peer_str);
+        sleep(1);
+    }
+}
+
+int _fget(int socket_fd, char *filename)
+{
+     send(socket_fd, &(int){ 0 }, sizeof(int), 0);
+     sleep(1);
+     send(socket_fd, filename, strlen(filename), 0);
+     sleep(1);
+ 
+     int file_len = 0;
+     if (recv(socket_fd, &file_len, sizeof(int), 0) == -1) {
+         fprintf(out, "Failed to recv file length,\n"
+                      "%s\n", strerror(errno));
+         return -1;
+     }
+
+     fprintf(out, "Incoming file length\t:\t%d\n", file_len);
+     
+     if (file_len == -1) {
+         send(socket_fd, &(int){ 237 }, sizeof(int), 0);
+         return -1;
+     }
+     
+     umask(0);
+     // O_APPEND | 
+     int file = open(filename, O_CREAT | O_WRONLY, 0666);
+     int k = 0;
+     for (; k < file_len;) {
+         char byte = 0;
+         recv(socket_fd, &byte, sizeof(byte), 0);
+         putchar(byte);
+         putchar('\n');
+         printf("Cnt\t\t\t:\t%d\n", k);
+         if (byte == '\0') {
+             ++k;
+             write(file, &(int){ ' ' }, sizeof(char));
+             continue;
+         }
+         write(file, &byte, sizeof(byte));
+     }
+     add_file(filename);
+     close(file);
+}
+
+
+void add_to_blacklist(char *key)
+{
+    pthread_mutex_lock(&mutex_blacklist); 
+    ht_set( blacklist, key, 1); 
+    pthread_mutex_unlock(&mutex_blacklist); 
+}
+
+int is_blacklisted(char *key)
+{
+    if (ht_get( blacklist, key) == -237) {
+        return 0;
+    }
+    return 1;
+}
+
+void inc_host_conn(char *key)
+{
+    pthread_mutex_lock(&mutex_cur_hosts); 
+    if (ht_get( cur_hosts, key) == -237) {
+        ht_set( cur_hosts, key, 0); 
+    } else {
+        ht_set( cur_hosts, key, ht_get( cur_hosts, key ) + 1); 
+    }
+    pthread_mutex_unlock(&mutex_cur_hosts); 
+}
+
+void dec_host_conn(char *key)
+{
+    pthread_mutex_lock(&mutex_cur_hosts); 
+    if (ht_get( cur_hosts, key) == -237) {
+        ht_set( cur_hosts, key, 0); 
+    } else {
+        if (ht_get( cur_hosts, key) != 0) { 
+            ht_set( cur_hosts, key, ht_get( cur_hosts, key ) - 1); 
+        }
+    }
+    pthread_mutex_unlock(&mutex_cur_hosts); 
+}
+
 
 int get_file_size(FILE *file)
 {

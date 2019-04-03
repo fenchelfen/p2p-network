@@ -48,6 +48,9 @@ void init_peer(int *master_fd_ptr, char **argv)
         puts(files[k]);
     }
 
+    cur_hosts = ht_create( 64 );
+    blacklist = ht_create( 64 );
+
     memset(personal_info, '\0', strlen(personal_info));
     strcat(personal_info, "alice");
     strcat(personal_info, ":");
@@ -101,26 +104,44 @@ void *rqst_handler(void *args)
     int peer_sock_fd = *((int *) params[0]);
     struct sockaddr_in *client_sock_in = (struct sockaddr_in *) params[1];
 
+    // LINUX : https://stackoverflow.com/questions/2876024/linux-is-there-a-read-or-recv-from-socket-with-timeout
+    struct timeval tv;
+    tv.tv_sec = 4;
+    tv.tv_usec = 0;
+    setsockopt(peer_sock_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &tv, sizeof(tv));
+
     fprintf(out, "Handler is dispatched\t:\t%ld\n", time(NULL));
     fprintf(out, "Thread's id          \t:\t%ld\n", syscall(__NR_gettid));
     fprintf(out, "Peer socket fild     \t:\t%d\n", peer_sock_fd);
 
     int opcode;
     for (;;) {
-        if ((recv(peer_sock_fd, &opcode, sizeof(int), 0)) == -1) {
-            fprintf(out, "Failed to recv OPСODE\n%s\n", strerror(errno));
+        int len = recv(peer_sock_fd, &opcode, sizeof(int), 0);
+        if (len == -1) {
+            fprintf(out, "Failed to recv OPСODE\t:\t%s\n"
+                         "Close conn with\t\t:\t%s:%d\n", strerror(errno), inet_ntoa(client_sock_in->sin_addr), ntohs(client_sock_in->sin_port));
+            dec_host_conn(inet_ntoa(client_sock_in->sin_addr));
             break;
         };
-        fprintf(out, "OPCODE\t\t\t:\t%d\n", opcode);
-        if (opcode == -237) {
-            fprintf(out, "Close conn with\t\t:\t%s:%d\n"
-                         "Got a cycle\n", inet_ntoa(client_sock_in->sin_addr), ntohs(client_sock_in->sin_port));
+        if (len == 0) {
+            fprintf(out, "Recved 0 bytes, it might be peer's orderly shutdown\n"
+                         "Close conn with\t\t:\t%s:%d\n", inet_ntoa(client_sock_in->sin_addr), ntohs(client_sock_in->sin_port));
+            dec_host_conn(inet_ntoa(client_sock_in->sin_addr));
             break;
-        }
+        };
+        
+        fprintf(out, "OPCODE\t\t\t:\t%d\n", opcode);
+        // if (opcode == -237) {
+        //     fprintf(out, "Got a cycle,\n"
+        //                  "Close conn with\t\t:\t%s:%d\n", inet_ntoa(client_sock_in->sin_addr), ntohs(client_sock_in->sin_port));
+        //     dec_host_conn(inet_ntoa(client_sock_in->sin_addr));
+        //     break;
+        // }
 
         if (opcode == 237) {
             fprintf(out, "Conn closure rqst arrived\n"
-                   "Release fild\t\t:\t%d\n", peer_sock_fd);
+                         "Release fild\t\t:\t%d\n", peer_sock_fd);
+            dec_host_conn(inet_ntoa(client_sock_in->sin_addr));
             break;
         } else if (
             opcode == 0) {
@@ -133,7 +154,6 @@ void *rqst_handler(void *args)
                     inet_ntoa(client_sock_in->sin_addr), ntohs(client_sock_in->sin_port));
             handle_1(peer_sock_fd);
         }
-        opcode = -237;
     }
     free(client_sock_in);
     close(peer_sock_fd);
@@ -165,10 +185,26 @@ void *dispatcher(void *master_fild_ptr)
                 sleep(1);
                 continue;
             }
+            char *key = inet_ntoa(client_sock_in.sin_addr);
 
-            fprintf(out, "Established new conn\t:\t%s:%u\n",
-                   inet_ntoa(client_sock_in.sin_addr), ntohs(client_sock_in.sin_port));
-            
+            if (is_blacklisted(key)) {
+                fprintf(out, "Blacklisted, close conn\t:\t%s:%u\n",
+                             inet_ntoa(client_sock_in.sin_addr), ntohs(client_sock_in.sin_port));
+                close(peer_sock_fd); 
+                continue;
+            }
+
+            puts("Flag B");
+
+            inc_host_conn(key);
+            puts("Flag C");
+            if (ht_get( cur_hosts, key ) >= 3) {
+                add_to_blacklist(key);
+            }
+
+            fprintf(out, "Established new conn\t:\t%s:%u\t:%d\n",
+                         inet_ntoa(client_sock_in.sin_addr), ntohs(client_sock_in.sin_port), ht_get( cur_hosts, key ));
+
             void **params[2];
             params[0] = (void *) &peer_sock_fd;
             params[1] = malloc(sizeof(client_sock_in));
@@ -190,88 +226,39 @@ void requester()
 
         if (strcmp(filename, "-") == 0) {
             puts("Exit RQSTer thread\n"
-                 "Press ctrl-C to slay dispatcher\n");
+                 "Press Ctrl-C to slay dispatcher\n");
             break;
         }
 
         for(int j = 0; j < peer_cnt; ++j) {
+
             int socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            struct timeval tv;
+            tv.tv_sec = 10;
+            tv.tv_usec = 0;
+            setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &tv, sizeof(tv));
+
             struct sockaddr_in dest;
-    
             memcpy((void *) &dest, (void *) &peers[j].meta, sizeof(peers[j].meta));
             int addr_len = sizeof(dest);
 
-            fprintf(out, "FGET file %s from\t:\t%s:%u\n", filename,
-                   inet_ntoa(dest.sin_addr), ntohs(dest.sin_port));
- 
             if (connect(socket_fd, (struct sockaddr *) &dest, addr_len) == - 1) {
                 fprintf(out, "Failed to TCP peer\t:\t%s:%u\n"
                              "%s\n", inet_ntoa(dest.sin_addr), ntohs(dest.sin_port), strerror(errno));
-                // exit(EXIT_FAILURE);
                 continue;
             };
             
-            send(socket_fd, &(int){ 1 }, sizeof(int), 0);
-            sleep(1);
-            send(socket_fd, personal_info, strlen(personal_info), 0);
-            sleep(1);
+            if (strcmp(filename, "_sync") == 0) {
+                fprintf(out, "SYN with\t\t\t%s:%u\n",
+                             inet_ntoa(dest.sin_addr), ntohs(dest.sin_port));
+                _sync(socket_fd);
+            } else {
+                fprintf(out, "FGET file %s from\t:\t%s:%u\n", filename,
+                             inet_ntoa(dest.sin_addr), ntohs(dest.sin_port));
+                _fget(socket_fd, filename);
+            }
 
-            send(socket_fd, &peer_cnt, sizeof(peer_cnt), 0);
-            pthread_mutex_lock(&mutex); 
-            for (int i = 0; i < peer_cnt; ++i) {
-                char *peer_str = get_string(&peers[i]);
-                fprintf(out, "Send peer\t\t:\t%s\n", peer_str);
-                send(socket_fd, peer_str, strlen(peer_str), 0); 
-                free(peer_str);
-                sleep(1);
-            }
-            pthread_mutex_unlock(&mutex); 
-        
-            if (strcmp(filename, "-") == 0) {
-                break;
-            }
-            send(socket_fd, &(int){ 0 }, sizeof(int), 0);
-            sleep(1);
-            send(socket_fd, filename, sizeof(filename), 0);
-            sleep(1);
-        
-            int file_len = 0;
-            recv(socket_fd, &file_len, sizeof(int), 0);
-
-            fprintf(out, "Incoming file length\t:\t%d\n", file_len);
-            
-            if (file_len == -1) {
-                send(socket_fd, &(int){ 237 }, sizeof(int), 0);
-                continue;
-            }
-            
-            umask(0);
-            int file = open(filename, O_APPEND | O_CREAT | O_WRONLY, 0777);
-            // for (int i = 0; i < file_len; ++i) {
-            //     char byte = 0;
-            //     recv(socket_fd, &byte, sizeof(char), 0);
-            //     putchar(byte);
-            //     write(file, &byte, sizeof(byte));
-            // }
-            int k = 0;
-            for (; k < file_len;) {
-                char byte = 0;
-                recv(socket_fd, &byte, sizeof(byte), 0);
-                putchar(byte);
-                putchar('\n');
-                printf("Cnt\t\t\t:\t%d\n", k);
-                if (byte == '\0') {
-                    ++k;
-                    // putchar(' ');
-                    write(file, &(int){ ' ' }, sizeof(char));
-                    continue;
-                }
-                // putchar(byte);
-                write(file, &byte, sizeof(byte));
-            }
             send(socket_fd, &(int){ 237 }, sizeof(int), 0);
-            add_file(filename);
-            close(file);
             break;
         }
     }
